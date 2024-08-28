@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<messaging-deployment xmlns="urn:jboss:messaging-deployment:1.0">
+	<hornetq-server>
+		<jms-destinations>
+			<jms-queue name="UnusedELChannel">
+				<entry name="queue/queueUnusedChannelEL" />
+				<entry name="java:jboss/exported/jms/queue/queueUnusedChannelEL" />
+			</jms-queue>
+			<jms-queue name="UsedELChannel">
+				<entry name="queue/queueElUsed" />
+				<entry name="java:jboss/exported/jms/queue/queueElUsed" />
+			</jms-queue>
+			<jms-queue name="queue1">
+				<entry name="queue/queue1" />
+				<entry name="java:jboss/exported/jms/queue/queue1" />
+			</jms-queue>
+			<jms-topic name="jcaChannel">
+				<entry name="topic/jca-channel" />
+				<entry name="java:jboss/exported/jms/topic/jca-channel" />
+			</jms-topic>
+			<jms-topic name="sdkConfigPropertyModification">
+				<entry name="topic/sdk-config-property-modification" />
+				<entry
+					name="java:jboss/exported/jms/topic/sdk-config-property-modification" />
+			</jms-topic>
+
+
+			<jms-topic name="SFWKsdkUpgradeCoreTopic">
+				<entry name="topic/sdk-upgrade-topic" />
+				<entry name="java:jboss/exported/jms/topic/sdk-upgrade-topic" />
+			</jms-topic>
+			<jms-topic name="SFWKsdkServiceAvailabilityTopic">
+				<entry name="topic/sdk-service-availability-topic" />
+				<entry
+					name="java:jboss/exported/jms/topic/sdk-service-availability-topic" />
+			</jms-topic>
+			<jms-topic name="HealthCheckTopic">
+				<entry name="topic/sdk-healthcheck-topic" />
+				<entry name="java:jboss/exported/jms/topic/sdk-healthcheck-topic" />
+			</jms-topic>
+
+		</jms-destinations>
+	</hornetq-server>
+</messaging-deployment>

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>com.ericsson.nms.security</groupId>
+		<artifactId>ai-web</artifactId>
+		<version>1.7.1-SNAPSHOT</version>
+	</parent>
+	<artifactId>ai-web-testsuite</artifactId>
+	<packaging>pom</packaging>
+	<name>[${project.parent.artifactId}] TestSuite</name>
+
+    <properties>
+        <managed.jboss.home.folder>target/jboss-eap-${version.jboss.eap}</managed.jboss.home.folder>
+        <managed.jboss.modules.folder>${managed.jboss.home.folder}/modules/system/layers/base/</managed.jboss.modules.folder>
+        <version.jboss.jee.spec>1.0.0.Final</version.jboss.jee.spec>
+        <version.pib>2.0.6</version.pib>
+        <version.pib.model>1.1.0</version.pib.model>
+        <maven.test.skip>true</maven.test.skip>
+    </properties>
+
+	<dependencies>
+		<dependency>
+			<groupId>javax.validation</groupId>
+			<artifactId>validation-api</artifactId>
+		</dependency>
+	</dependencies>
+
+	<profiles>
+		<!-- -Dts to activate testsuite-->
+		
+		<profile>
+			<id>activate_testsuite</id>
+			<activation>
+				<property><name>ts</name></property>
+			</activation>
+			<properties>
+				<maven.test.skip>false</maven.test.skip>
+			</properties>
+		</profile>
+	</profiles>
+  <modules>
+    <module>stress</module>
+    <module>benchmark</module>
+    <module>integration</module>
+  </modules>
+</project>

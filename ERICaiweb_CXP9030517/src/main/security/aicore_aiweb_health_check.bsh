@@ -1,0 +1,378 @@
+#!/bin/bash
+
+##
+## Copyright (c) 2013 Ericsson AB, 2013 - 2014.
+##
+## All Rights Reserved. Reproduction in whole or in part is prohibited
+## without the written consent of the copyright owner.
+##
+## ERICSSON MAKES NO REPRESENTATIONS OR WARRANTIES ABOUT THE
+## SUITABILITY OF THE SOFTWARE, EITHER EXPRESS OR IMPLIED, INCLUDING
+## BUT NOT LIMITED TO THE IMPLIED WARRANTIES OF MERCHANTABILITY,
+## FITNESS FOR A PARTICULAR PURPOSE, OR NON-INFRINGEMENT. ERICSSON
+## SHALL NOT BE LIABLE FOR ANY DAMAGES SUFFERED BY LICENSEE AS A
+## RESULT OF USING, MODIFYING OR DISTRIBUTING THIS SOFTWARE OR ITS
+## DERIVATIVES.
+##
+##  This script is used to run some sanity checks to make sure AI Web and AI Core products are configured correctly
+
+# UTILITIES
+
+AMF_ADM=/usr/bin/amf-adm
+AMF_FIND=/usr/bin/amf-find
+AMF_STATE=/usr/bin/amf-state
+AWK=/bin/awk
+BASENAME=/bin/basename
+CAT=/bin/cat
+CHCON=/usr/bin/chcon
+CP=/bin/cp
+CURL=/usr/bin/curl
+ECHO="echo -e"
+FIND=/bin/find
+GETENT=/usr/bin/getent
+GETSEBOOL=/usr/sbin/getsebool
+GREP=/bin/grep
+GROUPS=/usr/bin/groups
+HAGRP_STATE="/opt/VRTSvcs/bin/hagrp -state"
+HASTATUS_SUM="/opt/VRTSvcs/bin/hastatus -sum"
+HEAD=/usr/bin/head
+ID=/usr/bin/id
+KEYTOOL=/usr/java/default/bin/keytool
+KILL=/bin/kill
+LITP=/usr/bin/litp
+LS=/bin/ls
+MKDIR=/bin/mkdir
+MV=/bin/mv
+PING=/bin/ping
+PS=/bin/ps
+RM=/bin/rm
+RPM=/bin/rpm
+SED=/bin/sed
+RESTORECON=/sbin/restorecon
+SED=/bin/sed
+SEMANAGE=/usr/sbin/semanage
+SETSEBOOL=/usr/sbin/setsebool
+SU=/bin/su
+TAIL=/usr/bin/tail
+TOUCH=/bin/touch
+WC=/usr/bin/wc
+
+
+
+# COMMON GLOBAL VARIABLES
+
+CERTS_DIR=/ericsson/tor/data/certificates/aiweb
+HOSTNAME=`hostname`
+JBOSS_CLI=`${FIND} /home/jboss/ | ${GREP} -m 1 jboss-cli.sh`
+JBOSS_SERVER_CERT_ALIAS="ai-web"
+KEY_PASS="changeit"
+KEYSTORE=${CERTS_DIR}/ai-web-keystore.jks
+RESULT=0
+SCRIPT_NAME=`${BASENAME} ${0}`
+TEAM_NAME="AUTO_INT"
+TRUSTSTORE=${CERTS_DIR}/ai-web-cacerts
+
+#
+#
+# FUNCTIONS
+#
+#
+
+#///////////////////////////////////////////////////////////////
+# This function will print an error message to /var/log/messages
+# Arguments:
+#       $1 - Message
+# Return: 0
+#//////////////////////////////////////////////////////////////
+error()
+{
+        logger -s -t ${TEAM_NAME} -p user.err "ERROR ( ${SCRIPT_NAME} ): $1"
+}
+
+#//////////////////////////////////////////////////////////////
+# This function will print an info message to /var/log/messages
+# Arguments:
+#       $1 - Message
+# Return: 0
+#/////////////////////////////////////////////////////////////
+info()
+{
+        logger -s -t ${TEAM_NAME} -p user.notice "INFORMATION ( ${SCRIPT_NAME} ): $1"
+}
+
+#//////////////////////////////////////////////////////////////
+# This function will check that the autoint_user is created correctly
+# Arguments: 0
+# Return: 0
+#/////////////////////////////////////////////////////////////
+check_autoint_user_created() {
+        print "Check that autoint_user is created and ready for use..."
+
+	${ECHO} "Checking that /users/autoint_user exists..."
+	if [[ -d /users/autoint_user ]]; then
+		${ECHO} "Success\n"
+	else
+		${ECHO} "ERROR /users/autoint_user doesn't exist\n"
+		RESULT=1
+	fi
+
+	${ECHO} "Checking that autoint_user is part of litp_jboss group..."
+        groups autoint_user | ${GREP} litp_jboss >/dev/null 2>&1
+        if [[ ${?} -eq 0 ]]; then
+                ${ECHO} "Success\n"
+        else
+                ${ECHO} "ERROR autoint_user is not a member of litp_jboss group\n"
+		RESULT=1
+        fi
+}
+
+#//////////////////////////////////////////////////////////////
+# This function will print out the campaign status
+# Arguments: 0
+# Return: 0
+#/////////////////////////////////////////////////////////////
+check_campaigns() {
+        print "Check that all campaigns are committed..."
+
+        cmw-repository-list --campaign | xargs cmw-campaign-status
+        if [ `cmw-repository-list --campaign | xargs cmw-campaign-status | ${GREP} -v COMMITTED | ${WC} -l` -ne 0 ]; then
+                ${ECHO} "ERROR Problem with Campaigns\n"
+		RESULT=1
+	else
+                ${ECHO} "Success\n"
+        fi
+}
+
+#//////////////////////////////////////////////////////////////
+# This function will check that the certificate is setup for secure communication for AI Web
+# Arguments: 0
+# Return: 0
+#/////////////////////////////////////////////////////////////
+check_certificates() {
+	print "Check AI certificate have been imported into the keystore correctly"
+
+        ${ECHO} "Checking that ${TRUSTSTORE} exists\n"
+	if [[ -f ${TRUSTSTORE} ]]; then
+                ${ECHO} "Success\n"
+	else
+                ${ECHO} "ERROR ${TRUSTSTORE} does not exist\n"
+                RESULT=1
+	fi
+
+        ${ECHO} "Checking that ${KEYSTORE} exists and has certificate imported\n"
+	if [[ -f ${KEYSTORE} ]]; then
+		${KEYTOOL} -list -alias ${JBOSS_SERVER_CERT_ALIAS} -keystore ${KEYSTORE} -storepass ${KEY_PASS}
+	else
+                ${ECHO} "ERROR ${KEYSTORE} does not exist\n"
+                RESULT=1
+		return
+	fi
+
+	if [[ ${?} -eq 0 ]]; then
+                ${ECHO} "Success\n"
+        else
+                ${ECHO} "ERROR AI certificate has not been imported into the keystore correctly\n"
+                RESULT=1
+        fi
+}
+
+#//////////////////////////////////////////////////////////////
+# This function will print out on what JBoss the AI ears are deployed on
+# Arguments: 0
+# Return: 0
+#/////////////////////////////////////////////////////////////
+check_deployed_ears() {
+        print "Check that the AI Web and AI Core EARs are deployed..."
+
+	_temp_text_file_=/tmp/AI_ears.txt
+	_cli_su_instance_=`${ECHO} ${JBOSS_CLI} | ${AWK} -F_ {'print $3'}`
+
+	for _jboss_instance_ in `${LITP} /inventory/deployment1/cluster1/ show -rl | ${GREP} instance/ip`; do
+		_ip_address_=`${LITP} ${_jboss_instance_} show | ${GREP} address | ${AWK} -F\" {'print $2'}`
+		_jboss_su_instance_=`${ECHO} ${_jboss_instance_} | ${AWK} -F_ {'print $2'} | ${AWK} -F\/ {'print $1'}`
+		_jboss_service_=`${ECHO} ${_jboss_instance_} | ${AWK} -F\/ {'print $5'}`
+		if [[ ${_jboss_su_instance_} == ${_cli_su_instance_} ]]; then
+			${ECHO} "Checking if there are AI EARs deployed on the ${_jboss_service_} instance\n"
+			${JBOSS_CLI} controller=${_ip_address_}:9999 -c --command="deploy -l" | ${GREP} ai-
+
+			[ ${?} -eq 0 ] && ${JBOSS_CLI} controller=${_ip_address_}:9999 -c --command="deploy -l" | ${GREP} ai- >> ${_temp_text_file_}
+		fi
+	done
+
+	if [ `${CAT} ${_temp_text_file_} |  ${WC} -l` -eq 2 ]; then
+		${ECHO} "Success\n"
+	else
+		${ECHO} "ERROR There should be 2 EARs deployed\n"
+		RESULT=1
+	fi
+
+	${RM} -f ${_temp_text_file_}
+}
+
+#//////////////////////////////////////////////////////////////
+# This function will check that the directories that AI use are setup correctly
+# Arguments: 0
+# Return: 0
+#/////////////////////////////////////////////////////////////
+check_directories_setup() {
+        print "Check that the AI directories are created and ready for use..."
+
+	_dirs_to_check_="aiweb_dir autoint_root_dir autoint_files_dir"
+	for _instance_ in ${_dirs_to_check_}; do
+		_directory_=`${LITP} /definition/sc_common_dirs/${_instance_} show | ${GREP} path | ${AWK} -F\" {'print $2'}`
+		${ECHO} "Checking that ${_directory_} exists..."
+		if [[ -d ${_directory_} ]]; then
+			${ECHO} "Success\n"
+		else
+			${ECHO} "ERROR ${_directory_} doesn't exist\n"
+			RESULT=1
+		fi
+	done
+
+	_files_dir_=`${LITP} /definition/sc_common_dirs/autoint_files_dir show | ${GREP} path | ${AWK} -F\" {'print $2'}`
+        ${ECHO} "Checking that litp_jboss user can write to the ${_files_dir_} directory..."
+	${SU} litp_jboss -c "cd ${_files_dir_}; ${TOUCH} testfile"
+	
+        if [[ ${?} -eq 0 ]]; then
+                ${ECHO} "Success\n"
+		${RM} -f ${_files_dir_}/testfile
+        else
+                ${ECHO} "ERROR Not able to write to ${_files_dir_} as litp_jboss user\n"
+		RESULT=1
+        fi
+}
+
+#//////////////////////////////////////////////////////////////
+# This function will print the list of AI RPMs that are installed
+# Arguments: 0
+# Return: 0
+#/////////////////////////////////////////////////////////////
+check_rpms(){
+        print "Check that the ERICaicore and ERICaiweb RPMs have been installed..."
+
+	${RPM} -qa | grep 'ERICaicore\|ERICaiweb'
+
+	if [ `${RPM} -qa | grep -c 'ERICaicore\|ERICaiweb'` -eq 2 ]; then
+		${ECHO} "Success\n"
+	else
+		${ECHO} "ERROR There should be 2 RPMs installed\n"
+		RESULT=1
+	fi
+}
+
+#//////////////////////////////////////////////////////////////
+# This function will check that the secure port 8443 is open
+# Arguments: 0
+# Return: 0
+#/////////////////////////////////////////////////////////////
+check_secure_port(){
+        print "Check that the secure port 8443 is open..."
+
+	if [ `service iptables status | grep -c 8443` -eq 2 ]; then
+		${ECHO} "Success\n"
+	else
+                ${ECHO} "ERROR Port 8443 should be open for incoming and outgoing traffic\n"
+		RESULT=1
+	fi
+}
+
+#//////////////////////////////////////////////////////////////
+# This function will check that the JBoss that has AI Web ear deployed has the SSL connector correctly configured
+# Arguments: 0
+# Return: 0
+#/////////////////////////////////////////////////////////////
+check_ssl_connector(){
+        print "Check that SSL connector correctly configured for AI Web..."
+
+	_this_sc_su_instance_=`${ECHO} ${JBOSS_CLI} | ${AWK} -F_ {'print $3'}`
+
+	for _jboss_instance_ in `${LITP} /inventory/deployment1/cluster1/ show -rl | ${GREP} instance/ip`; do
+		_ip_address_=`${LITP} ${_jboss_instance_} show | ${GREP} address | ${AWK} -F\" {'print $2'}`
+		_jboss_su_instance_=`${ECHO} ${_jboss_instance_} | ${AWK} -F_ {'print $2'} | ${AWK} -F\/ {'print $1'}`
+		_jboss_service_=`${ECHO} ${_jboss_instance_} | ${AWK} -F\/ {'print $5'}`
+		if [[ ${_jboss_su_instance_} == ${_this_sc_su_instance_} ]]; then
+			${ECHO} "Checking if the AI Web EAR is deployed on the ${_jboss_service_} instance\n"
+			${JBOSS_CLI} controller=${_ip_address_}:9999 -c --command="deploy -l" | ${GREP} ai-web
+
+			if [ ${?} -eq 0 ]; then
+				${ECHO} "Success\n"
+				is_ssl_connector_setup ${_jboss_service_}
+				if [ ${?} -eq 0 ]; then
+					${ECHO} "Success\n"
+				else
+                			${ECHO} "ERROR SSL connector is not correctly configured for AI Web\n"
+					RESULT=1
+				fi
+				break
+			fi
+		fi
+	done
+}
+
+
+#
+####   INTERNAL FUNCTIONS   ######
+#
+
+#//////////////////////////////////////////////////////////////
+# This function will print an info message to the screen
+# Arguments:
+#       $1 - Text to print
+# Return: 0
+#/////////////////////////////////////////////////////////////
+print() {
+	TEXT=$1
+	${ECHO} "\n\n"
+	${ECHO} "###########################################"
+	${ECHO} "### ${HOSTNAME} ${TEXT} ${HOSTNAME}"
+	${ECHO} "###########################################"
+	${ECHO} -e "\n\n"
+}
+
+#//////////////////////////////////////////////////////////////
+# This function will check that the SSL connector is configured correctly for the Jboss instance passed in
+# Arguments:
+#       $1 - JBoss instance
+# Return: 0 - If the connector is correct
+#	  1 - If the connector is incorrect
+#/////////////////////////////////////////////////////////////
+is_ssl_connector_setup() {
+	_ssl_conn_xml_file_=`${FIND} /home/jboss/${1}* | ${GREP} enm-services.xml`
+
+	# Print out the entry
+	${CAT} ${_ssl_conn_xml_file_} | ${GREP} -B1 -A1 ${KEY_PASS}
+
+	# Check the entry for all necessary configurations
+	${CAT} ${_ssl_conn_xml_file_} | ${GREP} ${JBOSS_SERVER_CERT_ALIAS} | ${GREP} ${KEYSTORE} | ${GREP} ${TRUSTSTORE} >/dev/null 2>&1
+	[ ${?} -eq 0 ] && return 0 || return 1
+}
+
+
+
+####   MAIN   ######
+
+
+# Must be run as user root
+if ! ( ${ID} | ${GREP} '(root)' 1>/dev/null 2>&1 ); then
+        ${ECHO} "You must be 'root' to run this script!"
+        exit 1
+fi
+
+trap exit TERM INT HUP
+
+check_campaigns
+check_rpms
+check_autoint_user_created
+check_directories_setup
+check_deployed_ears
+check_secure_port
+check_certificates
+check_ssl_connector
+
+if [ ${RESULT} -eq 0 ]; then
+        ${ECHO} "\nAll checks passed"
+	exit 0
+else
+        ${ECHO} "\nERROR At least one of the checks has failed. Please check the log"
+	exit 1
+fi
